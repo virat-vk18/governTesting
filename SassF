@@ -1,0 +1,707 @@
+pragma solidity ^0.5.8;
+
+library SafeMath {
+
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        uint256 c = a + b;
+        require(c >= a, "SafeMath: addition overflow");
+        return c;
+    }
+
+    function sub(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b <= a, "SafeMath: subtraction overflow");
+        uint256 c = a - b;
+        return c;
+    }
+
+    function mul(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (a == 0) {
+            return 0;
+        }
+        uint256 c = a * b;
+        require(c / a == b, "SafeMath: multiplication overflow");
+        return c;
+    }
+
+    function div(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b > 0, "SafeMath: division by zero");
+        uint256 c = a / b;
+        return c;
+    }
+    
+    function mod(uint256 a, uint256 b) internal pure returns (uint256) {
+        require(b != 0, "SafeMath: modulo by zero");
+        return a % b;
+    }
+}
+
+contract TronForsage {
+    
+    struct User {
+        bool isExist;
+        uint id;
+        address referrer;
+        uint partnersCount;
+        mapping(uint8 => bool) x3LevelStatus;
+        mapping(uint8 => bool) x4LevelStatus;
+        mapping(uint8 => X3) x3Matrix;
+        mapping(uint8 => X4) x4Matrix;
+    }
+    
+    struct X3 {
+        bool isExist;
+        uint uniqueId;
+        uint currentReferrer;
+        uint[] referrals;
+        uint reInvestCount;
+    }
+    
+    struct X4 {
+        uint uniqueId;
+        address currentReferrer;
+        address[] firstLevelReferrals;
+        address[] secondLevelReferrals;
+        bool blocked;
+        uint reinvestCount;
+        address closedPart;
+    }
+    
+    using SafeMath for uint256;
+    uint8 public constant LAST_LEVEL = 20;
+    uint public currentUserId;
+    address public owner;
+    //bool public lockStatus;
+    uint public availBal;
+    
+    mapping (uint => address) public userList;
+    mapping (uint8 => uint) public levelPrice;
+    mapping (uint8 => uint) public x3InternalCurrentId;
+    mapping (address => User) public users;
+    mapping (uint8 => mapping (uint => X3)) public x3Intenal;
+    mapping (uint8 => mapping (uint => address)) public x3InternalUserList;
+    mapping (address => mapping (uint8 => uint)) public x3InternalID;
+    mapping (address => mapping (uint8 => uint)) public x3PaidTrx;
+    mapping (address => mapping (uint8 => mapping (uint8 => uint))) public earnedTrx;
+    mapping (address => mapping (uint8 => uint)) public totalEarnedTrx;
+    
+    event Registration(address indexed user, address indexed referrer, uint indexed userId, uint referrerId, uint8 matrix, uint8 level, uint time);
+    event Reinvest(address indexed user, address indexed currentReferrer, address indexed caller, uint8 matrix, uint8 level, uint time);
+    event Upgrade(address indexed user, address indexed referrer, uint8 matrix, uint8 level, uint time);
+    event NewUserPlace(address indexed user, address indexed referrer, uint8 matrix, uint8 level, uint8 place, uint time);
+    event MissedTrxReceive(address indexed receiver, address indexed _from, uint8 matrix, uint8 level, uint time);
+    event RecievedTrx(address indexed receiver, address indexed _from, uint8 matrix, uint8 level, uint time);
+    event SentExtraTrxDividends(address indexed _from, address indexed receiver, uint8 matrix, uint8 level, uint time);
+    
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only Owner");
+        _;
+    }
+    
+    // modifier isLock() {
+    //     require(lockStatus == false, "Contract Locked");
+    //     _;
+    // }
+    
+    constructor() public {
+        owner = msg.sender;
+        levelPrice[1] = 50 trx;
+        
+        for (uint8 i = 2; i <= LAST_LEVEL; i++) {
+            levelPrice[i] = levelPrice[i-1] * 2;
+        }
+        
+        User memory userDetails;
+        currentUserId = 1;
+
+        userDetails = User({
+            isExist: true,
+            id: 1,
+            referrer: address(0),
+            partnersCount: uint(0)
+        });
+       
+        users[owner] = userDetails;
+        userList[currentUserId] = owner;
+        
+        X3 memory x3Details;
+        
+        x3Details = X3({
+            isExist : true,
+            uniqueId : currentUserId,
+            currentReferrer : 0,
+            referrals : new uint[](0),
+            reInvestCount : 0
+        });
+        
+        for(uint8 i = 1; i <= LAST_LEVEL; i++) {   
+            users[owner].x3Matrix[i] = x3Details;
+            users[owner].x3LevelStatus[i] = true;
+            users[owner].x4LevelStatus[i] = true;
+            x3InternalCurrentId[i] = 1;
+            x3InternalID[owner][i] = x3InternalCurrentId[i];
+            x3Intenal[i][x3InternalCurrentId[i]] = x3Details;
+            x3InternalUserList[i][x3InternalCurrentId[i]] = owner;
+        }
+        
+    }
+    
+    function () external payable {
+        revert("Invalid Transaction");
+    } 
+    
+    function updateLevelPrice(uint8 _level, uint _price) onlyOwner external returns(bool) {
+        levelPrice[_level] = _price;
+        return true;
+    }
+   
+    function registration(address _referrer)  external payable {
+        
+        require(users[msg.sender].isExist == false, "User Exist");
+        require(msg.value == levelPrice[1].mul(2), "Incorrect Value");
+        require(users[_referrer].isExist == true, "Incorrect referrerID");
+        
+        // check 
+        address UserAddress=msg.sender;
+        uint32 size;
+        assembly {
+            size := extcodesize(UserAddress)
+        }
+        require(size == 0, "cannot be a contract");
+        
+        currentUserId = currentUserId.add(1);
+        
+        User memory userDetails;
+
+        userDetails = User({
+            isExist: true,
+            id: currentUserId,
+            referrer: _referrer,
+            partnersCount: uint(0)
+        });
+       
+        users[msg.sender] = userDetails;
+        users[_referrer].partnersCount = users[_referrer].partnersCount.add(1);
+        userList[currentUserId] = msg.sender;
+        
+        _x3Registration();
+        _x4Registration(msg.sender, _referrer);
+    }
+    
+    function _x3Registration() internal {
+        uint _referrerID;
+        
+         for(uint i = 1; i <= x3InternalCurrentId[1]; i++) {
+            if(x3Intenal[1][i].referrals.length < 3) {
+                _referrerID = i; 
+                break;
+            }
+            else if(x3Intenal[1][i].referrals.length == 3) {
+                continue;
+            }
+        }
+        
+        X3 memory x3Details;
+        x3InternalCurrentId[1] = x3InternalCurrentId[1].add(1);
+        
+        x3Details = X3({
+            isExist : true,
+            uniqueId : currentUserId,
+            currentReferrer : _referrerID,
+            referrals : new uint[](0),
+            reInvestCount : 0
+        });
+
+        x3Intenal[1][x3InternalCurrentId[1]] = x3Details;
+        x3InternalUserList[1][x3InternalCurrentId[1]] = msg.sender;
+        users[msg.sender].x3Matrix[1] = x3Details;
+        users[msg.sender].x3LevelStatus[1] = true;
+        
+        x3InternalID[msg.sender][1] = x3InternalCurrentId[1];
+        
+        x3Intenal[1][_referrerID].referrals.push(x3InternalCurrentId[1]);
+        users[x3InternalUserList[1][_referrerID]].x3Matrix[1].referrals.push(currentUserId);
+        
+        updateX3Details(0,1,_referrerID);
+        
+        emit Registration(msg.sender, x3InternalUserList[1][_referrerID], users[msg.sender].id, users[x3InternalUserList[1][_referrerID]].id, 1, 1, now);
+        
+    }
+    
+    function _upgrade(uint8 _flag, address _userAddress, uint8 _level) internal  {
+        uint _userId = users[_userAddress].id;
+        
+        uint _referrerID;
+        
+        for(uint i = 1; i <= x3InternalCurrentId[_level]; i++) {
+            if(x3Intenal[_level][i].referrals.length < 3) {
+                _referrerID = i; 
+                break;
+            }
+            else if(x3Intenal[_level][i].referrals.length == 3) {
+                continue;
+            }
+        }
+        
+        X3 memory x3Details;
+        x3InternalCurrentId[_level] = x3InternalCurrentId[_level].add(1);
+        
+        x3Details = X3({
+            isExist : true,
+            uniqueId : _userId,
+            currentReferrer : _referrerID,
+            referrals : new uint[](0),
+            reInvestCount : 0
+        });
+            
+        x3Intenal[_level][x3InternalCurrentId[_level]] = x3Details;
+        x3InternalUserList[_level][x3InternalCurrentId[_level]] = _userAddress;
+        
+        if(_flag != 3) {
+            users[_userAddress].x3Matrix[_level] = x3Details;
+            users[_userAddress].x3LevelStatus[_level] = true;
+            x3InternalID[_userAddress][_level] = x3InternalCurrentId[_level];
+        }
+        else {
+            users[_userAddress].x3Matrix[_level].isExist = true;
+            users[_userAddress].x3Matrix[_level].uniqueId = _userId;
+            users[_userAddress].x3Matrix[_level].currentReferrer = _referrerID;
+            users[_userAddress].x3Matrix[_level].referrals = new uint[](0);
+            emit Reinvest(_userAddress, x3InternalUserList[_level][_referrerID], msg.sender, 1, _level, now);
+        }
+        
+        x3Intenal[_level][_referrerID].referrals.push(x3InternalCurrentId[_level]);
+        users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].referrals.push(_userId);
+        
+        //emit NewUserPlace(_userAddress, userList[users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].referrals[1]], 1, _level, uint8(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].referrals.length), now);
+        
+        updateX3Details(_flag,_level,_referrerID);
+        
+        if(_flag != 3)
+            emit Upgrade(_userAddress, x3InternalUserList[_level][_referrerID], 1, _level, now);
+    }
+    
+    function updateX3Details(uint8 _flag, uint8 _level, uint _referrerID) internal  {
+        
+        if(_flag == 0)    
+            availBal = availBal.add(levelPrice[1]);
+        
+        if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].referrals.length <=2 ) {
+            
+             if(x3InternalUserList[_level][_referrerID] != owner) { // not owner
+                 
+                if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].reInvestCount == 0) {
+                   
+                    if(_level < LAST_LEVEL) {
+                        
+                        if(availBal >= levelPrice[_level+1] && users[x3InternalUserList[_level][_referrerID]].x3LevelStatus[_level + 1] == false) 
+                            _upgrade(1,x3InternalUserList[_level][_referrerID], _level + 1); // upgrade
+                    }
+                    
+                    else {
+                            
+                        if(availBal >= levelPrice[_level]) {
+                            x3Pay(1,_level,x3InternalCurrentId[_level],levelPrice[_level+1]); // 12th level
+                            availBal = availBal.sub(levelPrice[_level]);
+                        }
+                    }
+                        
+                }
+                
+                else if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].reInvestCount == 1) {
+                    
+                    if(_level == 2)  { // original 6
+                        
+                       if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].referrals.length == 1)
+                        {
+                            if(availBal >= levelPrice[_level]) {
+                                for(uint i= 1; i<= 2; i++) { // original 32
+                                    _upgrade(3,x3InternalUserList[_level][_referrerID], 1); // reinvest
+                                     //emit Reinvest(x3InternalUserList[_level][_referrerID], x3InternalUserList[_level][x3Intenal[_level][_referrerID].currentReferrer], msg.sender, 1, _level, now);
+                                    users[x3InternalUserList[_level][_referrerID]].x3Matrix[1].reInvestCount =  users[x3InternalUserList[_level][_referrerID]].x3Matrix[1].reInvestCount.add(1);
+                                    users[x3InternalUserList[_level][_referrerID]].x3Matrix[1].referrals = new uint[](0); 
+                                }
+                            }
+                        }
+                        
+                        else {
+                      
+                            if(availBal >= levelPrice[_level]) {    
+                                x3Pay(1,_level,x3InternalCurrentId[_level],levelPrice[_level]);
+                                availBal = availBal.sub(levelPrice[_level]);
+                            }
+                        }
+                        
+                    }
+                    
+                    else {
+                      
+                        if(availBal >= levelPrice[_level]) {    
+                            x3Pay(1,_level,x3InternalCurrentId[_level],levelPrice[_level]);
+                            availBal = availBal.sub(levelPrice[_level]);
+                        }
+                    }
+                    
+                }
+                
+                else if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].reInvestCount > 1) {
+                            
+                    if(availBal >= levelPrice[_level]) {
+                        x3Pay(1,_level,x3InternalCurrentId[_level],levelPrice[_level]);
+                        availBal = availBal.sub(levelPrice[_level]);
+                    }
+                }
+                 
+            }
+            
+            else {  // owner
+                    
+                if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].reInvestCount != 1) {
+                    if(availBal >= levelPrice[_level]) {
+                        x3Pay(1,_level,x3InternalCurrentId[_level],levelPrice[_level]);
+                        availBal = availBal.sub(levelPrice[_level]);
+                    }
+                }
+                
+                
+                else if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].reInvestCount == 1) { 
+                    
+                    if(_level == 2)  { //original 6 
+                        
+                        if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].referrals.length == 1)
+                        {
+                            if(availBal >= levelPrice[_level]) {
+                                for(uint i= 1; i<= 2; i++) { // original 32
+                                    _upgrade(3,x3InternalUserList[_level][_referrerID], 1);
+                                    //emit Reinvest(x3InternalUserList[_level][_referrerID], x3InternalUserList[_level][x3Intenal[_level][_referrerID].currentReferrer], msg.sender, 1, _level, now);
+                                    users[x3InternalUserList[_level][_referrerID]].x3Matrix[1].reInvestCount =  users[x3InternalUserList[_level][_referrerID]].x3Matrix[1].reInvestCount.add(1);
+                                    users[x3InternalUserList[_level][_referrerID]].x3Matrix[1].referrals = new uint[](0); 
+                                   
+                                }
+                            }
+                        }
+                        
+                        else {
+                      
+                            if(availBal >= levelPrice[_level]) {    
+                                x3Pay(1,_level,x3InternalCurrentId[_level],levelPrice[_level]);
+                                availBal = availBal.sub(levelPrice[_level]);
+                            }
+                        }
+                        
+                    }
+                    
+                    else {
+                      
+                        if(availBal >= levelPrice[_level]) {    
+                            x3Pay(1,_level,x3InternalCurrentId[_level],levelPrice[_level]);
+                            availBal = availBal.sub(levelPrice[_level]);
+                        }
+                    }
+                }
+            }
+            
+        }
+        
+        else if(users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].referrals.length == 3 ) {
+                    
+            if(availBal >= levelPrice[_level]) {
+                _upgrade(3,x3InternalUserList[_level][_referrerID],_level); // reInvest
+                //emit Reinvest(x3InternalUserList[_level][_referrerID], x3InternalUserList[_level][x3Intenal[_level][_referrerID].currentReferrer], msg.sender, 1, _level, now);
+                users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].reInvestCount =  users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].reInvestCount.add(1);
+                users[x3InternalUserList[_level][_referrerID]].x3Matrix[_level].referrals = new uint[](0); 
+            }
+        }
+        
+    }
+    
+    function x3Pay(uint _flag, uint8 _level, uint _userId, uint _amt) internal {
+        
+        uint[2] memory referer;
+        
+        if(_flag == 1) 
+             referer[0] = x3Intenal[_level][_userId].currentReferrer;
+
+        if(users[x3InternalUserList[_level][referer[0]]].isExist == false) 
+            referer[0] = 1;
+        
+        if(users[x3InternalUserList[_level][referer[0]]].x3LevelStatus[_level] == true) {
+            address refererAddress = x3InternalUserList[_level][referer[0]];
+            require((address(uint160(refererAddress)).send(_amt)), "Transaction Failure");
+            earnedTrx[refererAddress][1][_level] = earnedTrx[refererAddress][1][_level].add(_amt);
+            totalEarnedTrx[refererAddress][1] = totalEarnedTrx[refererAddress][1].add(_amt);
+            emit RecievedTrx(refererAddress, x3InternalUserList[_level][_userId], 1, _level, now);
+        }
+        
+        else  {
+               address refererAddress = x3InternalUserList[_level][referer[0]];
+               emit MissedTrxReceive(refererAddress, x3InternalUserList[_level][_userId], 1, _level, now);
+               x3Pay(1,_level,referer[0],_amt);
+        }
+    }
+    
+    function usersX3Details(address userAddress, uint8 level) public view returns(bool _isExist,uint _uniqueId,uint _currentReferrer, uint _earnedTrx,uint _reInvestCount, uint _totalEarnedTrx) {
+        return (users[userAddress].x3Matrix[level].isExist,
+        users[userAddress].x3Matrix[level].uniqueId,
+        users[userAddress].x3Matrix[level].currentReferrer,
+        earnedTrx[userAddress][1][level],
+        users[userAddress].x3Matrix[level].reInvestCount,
+        totalEarnedTrx[userAddress][1]);
+    }
+    
+    function viewX3UserReferral(address userAddress, uint8 level) public view returns(uint[] memory) {
+        return (users[userAddress].x3Matrix[level].referrals);
+    }
+    
+    function viewX3InternalUserReferral(uint _userId, uint8 level) public view returns(uint[] memory) {
+        return (x3Intenal[level][_userId].referrals);
+    }
+    
+    function usersX3DetailsLevelStatus(address userAddress, uint8 level) public view returns(bool) {
+        return users[userAddress].x3LevelStatus[level];
+    }
+    
+    // x4
+    
+    function _x4Registration(address userAddress, address referrerAddress) private {
+        
+        users[userAddress].x4LevelStatus[1] = true;
+
+        updateX4Referrer(userAddress, findFreeX4Referrer(userAddress, 1), 1);
+        
+        emit Registration(userAddress, referrerAddress, users[userAddress].id, users[referrerAddress].id,2,1, now);
+    }
+    
+    function x4BuyLevel(uint8 level) external payable {
+        require(isUserExists(msg.sender), "user is not exists. Register first.");
+        require(msg.value == levelPrice[level], "invalid price");
+        require(level > 1 && level <= LAST_LEVEL, "invalid level");
+
+        require(!users[msg.sender].x4LevelStatus[level], "level already activated"); 
+
+        if (users[msg.sender].x4Matrix[level-1].blocked) {
+            users[msg.sender].x4Matrix[level-1].blocked = false;
+        }
+
+        address freeX4Referrer = findFreeX4Referrer(msg.sender, level);
+        
+        users[msg.sender].x4LevelStatus[level] = true;
+        updateX4Referrer(msg.sender, freeX4Referrer, level);
+        
+        emit Upgrade(msg.sender, freeX4Referrer, 2, level, now);
+        
+    }    
+    
+    function updateX4Referrer(address userAddress, address referrerAddress, uint8 level) private {
+        require(users[referrerAddress].x4LevelStatus[level], "500. Referrer level is inactive");
+        
+        if (users[referrerAddress].x4Matrix[level].firstLevelReferrals.length < 2) {
+            users[referrerAddress].x4Matrix[level].firstLevelReferrals.push(userAddress);
+            emit NewUserPlace(userAddress, referrerAddress, 2, level, uint8(users[referrerAddress].x4Matrix[level].firstLevelReferrals.length), now);
+            
+            //set current level
+            users[userAddress].x4Matrix[level].currentReferrer = referrerAddress;
+
+            if (referrerAddress == owner) {
+                return sendTrxDividends(referrerAddress, userAddress, level);
+            }
+            
+            address ref = users[referrerAddress].x4Matrix[level].currentReferrer;            
+            users[ref].x4Matrix[level].secondLevelReferrals.push(userAddress); 
+            
+            uint len = users[ref].x4Matrix[level].firstLevelReferrals.length;
+            
+            if ((len == 2) && 
+                (users[ref].x4Matrix[level].firstLevelReferrals[0] == referrerAddress) &&
+                (users[ref].x4Matrix[level].firstLevelReferrals[1] == referrerAddress)) {
+                if (users[referrerAddress].x4Matrix[level].firstLevelReferrals.length == 1) {
+                    emit NewUserPlace(userAddress, ref, 2, level, 5, now);
+                } else {
+                    emit NewUserPlace(userAddress, ref, 2, level, 6, now);
+                }
+            }  else if ((len == 1 || len == 2) &&
+                    users[ref].x4Matrix[level].firstLevelReferrals[0] == referrerAddress) {
+                if (users[referrerAddress].x4Matrix[level].firstLevelReferrals.length == 1) {
+                    emit NewUserPlace(userAddress, ref, 2, level, 3, now);
+                } else {
+                    emit NewUserPlace(userAddress, ref, 2, level, 4, now);
+                }
+            } else if (len == 2 && users[ref].x4Matrix[level].firstLevelReferrals[1] == referrerAddress) {
+                if (users[referrerAddress].x4Matrix[level].firstLevelReferrals.length == 1) {
+                    emit NewUserPlace(userAddress, ref, 2, level, 5, now);
+                } else {
+                    emit NewUserPlace(userAddress, ref, 2, level, 6, now);
+                }
+            }
+
+            return updateX4ReferrerSecondLevel(userAddress, ref, level);
+        }
+        
+        users[referrerAddress].x4Matrix[level].secondLevelReferrals.push(userAddress);
+
+        if (users[referrerAddress].x4Matrix[level].closedPart != address(0)) {
+            if ((users[referrerAddress].x4Matrix[level].firstLevelReferrals[0] == 
+                users[referrerAddress].x4Matrix[level].firstLevelReferrals[1]) &&
+                (users[referrerAddress].x4Matrix[level].firstLevelReferrals[0] ==
+                users[referrerAddress].x4Matrix[level].closedPart)) {
+
+                updateX4(userAddress, referrerAddress, level, true);
+                return updateX4ReferrerSecondLevel(userAddress, referrerAddress, level);
+            } else if (users[referrerAddress].x4Matrix[level].firstLevelReferrals[0] == 
+                users[referrerAddress].x4Matrix[level].closedPart) {
+                updateX4(userAddress, referrerAddress, level, true);
+                return updateX4ReferrerSecondLevel(userAddress, referrerAddress, level);
+            } else {
+                updateX4(userAddress, referrerAddress, level, false);
+                return updateX4ReferrerSecondLevel(userAddress, referrerAddress, level);
+            }
+        }
+
+        if (users[referrerAddress].x4Matrix[level].firstLevelReferrals[1] == userAddress) {
+            updateX4(userAddress, referrerAddress, level, false);
+            return updateX4ReferrerSecondLevel(userAddress, referrerAddress, level);
+        } else if (users[referrerAddress].x4Matrix[level].firstLevelReferrals[0] == userAddress) {
+            updateX4(userAddress, referrerAddress, level, true);
+            return updateX4ReferrerSecondLevel(userAddress, referrerAddress, level);
+        }
+        
+        if (users[users[referrerAddress].x4Matrix[level].firstLevelReferrals[0]].x4Matrix[level].firstLevelReferrals.length <= 
+            users[users[referrerAddress].x4Matrix[level].firstLevelReferrals[1]].x4Matrix[level].firstLevelReferrals.length) {
+            updateX4(userAddress, referrerAddress, level, false);
+        } else {
+            updateX4(userAddress, referrerAddress, level, true);
+        }
+        
+        updateX4ReferrerSecondLevel(userAddress, referrerAddress, level);
+    }
+
+    function updateX4(address userAddress, address referrerAddress, uint8 level, bool x2) private {
+        if (!x2) {
+            users[users[referrerAddress].x4Matrix[level].firstLevelReferrals[0]].x4Matrix[level].firstLevelReferrals.push(userAddress);
+            emit NewUserPlace(userAddress, users[referrerAddress].x4Matrix[level].firstLevelReferrals[0], 2, level, uint8(users[users[referrerAddress].x4Matrix[level].firstLevelReferrals[0]].x4Matrix[level].firstLevelReferrals.length), now);
+            emit NewUserPlace(userAddress, referrerAddress, 2, level, 2 + uint8(users[users[referrerAddress].x4Matrix[level].firstLevelReferrals[0]].x4Matrix[level].firstLevelReferrals.length), now);
+            //set current level
+            users[userAddress].x4Matrix[level].currentReferrer = users[referrerAddress].x4Matrix[level].firstLevelReferrals[0];
+        } else {
+            users[users[referrerAddress].x4Matrix[level].firstLevelReferrals[1]].x4Matrix[level].firstLevelReferrals.push(userAddress);
+            emit NewUserPlace(userAddress, users[referrerAddress].x4Matrix[level].firstLevelReferrals[1], 2, level, uint8(users[users[referrerAddress].x4Matrix[level].firstLevelReferrals[1]].x4Matrix[level].firstLevelReferrals.length), now);
+            emit NewUserPlace(userAddress, referrerAddress, 2, level, 4 + uint8(users[users[referrerAddress].x4Matrix[level].firstLevelReferrals[1]].x4Matrix[level].firstLevelReferrals.length), now);
+            //set current level
+            users[userAddress].x4Matrix[level].currentReferrer = users[referrerAddress].x4Matrix[level].firstLevelReferrals[1];
+        }
+    }
+    
+    function updateX4ReferrerSecondLevel(address userAddress, address referrerAddress, uint8 level) private {
+        if (users[referrerAddress].x4Matrix[level].secondLevelReferrals.length < 4) {
+            return sendTrxDividends(referrerAddress, userAddress, level);
+        }
+        
+        address[] memory x4 = users[users[referrerAddress].x4Matrix[level].currentReferrer].x4Matrix[level].firstLevelReferrals;
+        
+        if (x4.length == 2) {
+            if (x4[0] == referrerAddress ||
+                x4[1] == referrerAddress) {
+                users[users[referrerAddress].x4Matrix[level].currentReferrer].x4Matrix[level].closedPart = referrerAddress;
+            } else if (x4.length == 1) {
+                if (x4[0] == referrerAddress) {
+                    users[users[referrerAddress].x4Matrix[level].currentReferrer].x4Matrix[level].closedPart = referrerAddress;
+                }
+            }
+        }
+        
+        users[referrerAddress].x4Matrix[level].firstLevelReferrals = new address[](0);
+        users[referrerAddress].x4Matrix[level].secondLevelReferrals = new address[](0);
+        users[referrerAddress].x4Matrix[level].closedPart = address(0);
+
+        if (!users[referrerAddress].x4LevelStatus[level+1] && level != LAST_LEVEL) {
+            users[referrerAddress].x4Matrix[level].blocked = true;
+        }
+
+        users[referrerAddress].x4Matrix[level].reinvestCount++;
+        
+        if (referrerAddress != owner) {
+            address freeReferrerAddress = findFreeX4Referrer(referrerAddress, level);
+
+            emit Reinvest(referrerAddress, freeReferrerAddress, userAddress, 2, level, now);
+            updateX4Referrer(referrerAddress, freeReferrerAddress, level);
+        } else {
+            emit Reinvest(owner, address(0), userAddress, 2, level, now);
+            sendTrxDividends(owner, userAddress, level);
+        }
+    }
+    
+    function findFreeX4Referrer(address userAddress, uint8 level) public view returns(address) {
+        while (true) {
+            if (users[users[userAddress].referrer].x4LevelStatus[level]) {
+                return users[userAddress].referrer;
+            }
+            
+            userAddress = users[userAddress].referrer;
+        }
+    }
+
+    function usersx4LevelStatus(address userAddress, uint8 level) public view returns(bool) {
+        return users[userAddress].x4LevelStatus[level];
+    }
+   
+    function usersX4Details(address userAddress, uint8 level) public view returns(address, address[] memory, address[] memory, bool, address) {
+        return (users[userAddress].x4Matrix[level].currentReferrer,
+                users[userAddress].x4Matrix[level].firstLevelReferrals,
+                users[userAddress].x4Matrix[level].secondLevelReferrals,
+                users[userAddress].x4Matrix[level].blocked,
+                users[userAddress].x4Matrix[level].closedPart);
+    }
+    
+    function isUserExists(address user) public view returns (bool) {
+        return (users[user].id != 0);
+    }
+
+    function findTrxReceiver(address userAddress, address _from, uint8 level) private returns(address, bool) {
+        address receiver = userAddress;
+        bool isExtraDividends;
+        
+            while (true) {
+                if (users[receiver].x4Matrix[level].blocked) {
+                    emit MissedTrxReceive(receiver, _from, 2, level, now);
+                    isExtraDividends = true;
+                    receiver = users[receiver].x4Matrix[level].currentReferrer;
+                } else {
+                    return (receiver, isExtraDividends);
+                }
+            }
+       
+    }
+
+    function sendTrxDividends(address userAddress, address _from, uint8 level) private {
+        (address receiver, bool isExtraDividends) = findTrxReceiver(userAddress, _from, level);
+        
+        require(address(uint160(receiver)).send(levelPrice[level]), "X4 Transaction Failure");
+        earnedTrx[receiver][2][level] = earnedTrx[receiver][2][level].add(levelPrice[level]);
+        totalEarnedTrx[receiver][2] = totalEarnedTrx[receiver][2].add(levelPrice[level]);
+        
+        if (isExtraDividends) 
+            emit SentExtraTrxDividends(_from, receiver, 2, level, now);
+        
+        else 
+             emit RecievedTrx(receiver, _from, 2, level, now);
+    }
+    
+    function getTotalEarnedTrx(uint8 _matrix) public view returns(uint) {
+        uint totalTrx;
+        if(_matrix == 1)
+        {
+            for( uint i=1;i<=currentUserId;i++) {
+                totalTrx = totalTrx.add(totalEarnedTrx[userList[i]][1]);
+            }
+        }
+        else if(_matrix == 2)
+        {
+            for( uint i=1; i <= currentUserId; i++) {
+                totalTrx = totalTrx.add(totalEarnedTrx[userList[i]][2]);
+            }
+            
+        }
+        
+        return totalTrx;
+    }
+    
+}
